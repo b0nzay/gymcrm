@@ -4,7 +4,15 @@ from rest_framework.permissions import AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.views import APIView
 
-from .serializers import RegisterSerializer, LoginSerializer, UserSerializer
+from django.db.models import Q
+from django.shortcuts import get_object_or_404
+
+from .serializers import RegisterSerializer, LoginSerializer, UserSerializer, AccessCodeSerializer, AccessCodeRotateSerializer, ClientCreateSerializer, StaffNoteSerializer, StaffNoteCreateSerializer
+from .permissions import IsAdmin, IsTrainerOrAdmin
+from .models import AccessCode, User, StaffNote
+
+from memberships.models import Membership, Visit
+from memberships.serializers import MembershipSerializer, VisitSerializer
 
 
 class RegisterView(generics.CreateAPIView):
@@ -26,6 +34,7 @@ class RegisterView(generics.CreateAPIView):
             status=status.HTTP_201_CREATED
         )
 
+
 class LoginView(APIView):
     permission_classes = [AllowAny]
 
@@ -43,8 +52,84 @@ class LoginView(APIView):
             status=status.HTTP_200_OK
         )
 
+
 class MeView(generics.RetrieveUpdateAPIView):
     serializer_class = UserSerializer
 
     def get_object(self):
         return self.request.user
+
+
+class AccessCodeCurrentView(APIView):
+    permission_classes = [IsAdmin]
+
+    def get(self, request):
+        active = AccessCode.get_active()
+        if not active:
+            return Response({'detail': 'Активного кода нет'}, status=404)
+        return Response(AccessCodeSerializer(active).data)
+
+
+class AccessCodeRotateView(APIView):
+    permission_classes = [IsAdmin]
+
+    def post(self, request):
+        serializer = AccessCodeRotateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        access_code = serializer.save()
+        return Response(AccessCodeSerializer(access_code).data, status=200)
+
+
+class ClientListView(APIView):
+    permission_classes = [IsTrainerOrAdmin]
+
+    def get(self, request):
+        q = request.query_params.get('q', '').strip()
+        clients = User.objects.filter(role=User.Role.CLIENT)
+
+        if q != '':
+            clients = clients.filter(Q(phone__icontains=q) | Q(first_name__icontains=q) | Q(last_name__icontains=q))
+
+        return Response(UserSerializer(clients, many=True).data)
+
+
+class ClientDetailView(APIView):
+    permission_classes = [IsTrainerOrAdmin]
+
+    def get(self, request, pk):
+        user = get_object_or_404(User, pk=pk, role=User.Role.CLIENT)
+        memberships = Membership.objects.filter(client=user).order_by('-issued_at')
+        visits = Visit.objects.filter(membership__client=user).order_by('-marked_at')
+        notes = StaffNote.objects.filter(client=user).order_by('-created_at')
+        return Response({"user": UserSerializer(user).data,"memberships": MembershipSerializer(memberships, many=True).data,"visits": VisitSerializer(visits, many=True).data, "notes": StaffNoteSerializer(notes, many=True).data})
+
+
+class ClientCreateView(generics.CreateAPIView):
+    permission_classes = [IsTrainerOrAdmin]
+    serializer_class = ClientCreateSerializer 
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+
+        return Response(UserSerializer(user).data,status=status.HTTP_201_CREATED)
+
+
+class StaffNoteListCreateView(APIView):
+    permission_classes = [IsTrainerOrAdmin]
+
+    def get(self, request, pk):
+        client = get_object_or_404(User, pk=pk, role=User.Role.CLIENT)
+        notes = StaffNote.objects.filter(client=client).order_by('-created_at')
+        return Response(StaffNoteSerializer(notes, many=True).data)
+
+    def post(self, request, pk):
+        client = get_object_or_404(User, pk=pk, role=User.Role.CLIENT)
+        serializer = StaffNoteCreateSerializer(
+            data=request.data,
+            context={'request': request, 'client': client},
+        )
+        serializer.is_valid(raise_exception=True)
+        note = serializer.save()
+        return Response(StaffNoteSerializer(note).data, status=status.HTTP_201_CREATED)

@@ -16,6 +16,8 @@ from django.conf.global_settings import AUTH_USER_MODEL
 
 from datetime import timedelta
 
+import os
+
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -89,7 +91,7 @@ DATABASES = {
         'USER': 'postgres',
         'PASSWORD': 'postgres',
         'HOST': 'localhost',
-        'PORT': '5433',
+        'PORT': '5432',
     }
 }
 
@@ -143,3 +145,6 @@ SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=10),
     "REFRESH_TOKEN_LIFETIME": timedelta(hours=12),
 }
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
