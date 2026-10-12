@@ -1,6 +1,6 @@
 from django.db import models
 from django.db.models import UniqueConstraint, Q
-from datetime import date
+from django.utils import timezone
 from users.models import User
 
 class MembershipPlan(models.Model):
@@ -31,7 +31,6 @@ class Membership(models.Model):
     visits_total = models.PositiveSmallIntegerField()
     visits_remaining = models.PositiveSmallIntegerField()
     price_list = models.IntegerField()
-    price_paid = models.IntegerField()
     status = models.CharField(max_length=20, choices=MembershipStatus.choices, default=MembershipStatus.ACTIVE)
     notes = models.TextField(blank=True)
     cancelled_at = models.DateTimeField(null=True, blank=True)
@@ -49,6 +48,23 @@ class Membership(models.Model):
 
     def __str__(self):
         return f"{self.client.first_name} {self.client.last_name} - {self.plan.name} - {self.issued_at} - {self.valid_until}"
+
+    @classmethod
+    def sync_overdue(cls, client=None):
+        today = timezone.localdate()
+        expired = cls.objects.filter(
+            status=MembershipStatus.ACTIVE,
+            valid_until__lt=today,
+        )
+        depleted = cls.objects.filter(
+            status=MembershipStatus.ACTIVE,
+            visits_remaining=0,
+        )
+        if client is not None:
+            expired = expired.filter(client=client)
+            depleted = depleted.filter(client=client)
+        expired.update(status=MembershipStatus.EXPIRED)
+        depleted.update(status=MembershipStatus.DEPLETED)
 
 class Visit(models.Model):
     membership = models.ForeignKey(Membership, on_delete=models.CASCADE)

@@ -3,9 +3,8 @@ from django.contrib.auth.models import AbstractUser
 
 from .managers import UserManager
 
-from django.core.validators import FileExtensionValidator
-
 import secrets
+
 
 class User(AbstractUser):
 
@@ -16,12 +15,7 @@ class User(AbstractUser):
         TRAINER = 'trainer', 'Trainer'
         ADMIN = 'admin', 'Admin'
 
-    username = None
-
-    phone = models.CharField(
-        max_length=20,
-        unique=True
-    )
+    username = models.CharField(max_length=32, unique=True)
 
     role = models.CharField(
         max_length=20,
@@ -29,29 +23,17 @@ class User(AbstractUser):
         default=Role.CLIENT
     )
 
-    birth_date = models.DateField(
-        null=True,
-        blank=True
-    )
-
-    photo = models.ImageField(
-        upload_to='users/photos/',
-        null=True,
-        blank=True,
-        validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png'])]
-    )
-
-    medical_notes = models.TextField(
-        null=True,
-        blank=True
-    )
-
-    USERNAME_FIELD = 'phone'
-
+    USERNAME_FIELD = 'username'
     REQUIRED_FIELDS = []
 
     def __str__(self):
-        return f'phone: {self.phone}, role: {self.role}'
+        return f'username: {self.username}, role: {self.role}'
+
+    @property
+    def display_name(self):
+        name = f'{self.first_name} {self.last_name}'.strip()
+        return name or self.username
+
 
 class AccessCode(models.Model):
     code = models.CharField(max_length=8, unique=True)
@@ -84,3 +66,30 @@ class StaffNote(models.Model):
 
     def __str__(self):
         return f'{self.author}: {self.text}. Создана в {self.created_at}'
+
+
+class ActivityLog(models.Model):
+    actor = models.ForeignKey(
+        User,
+        related_name='activity_logs',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    action = models.CharField(max_length=64)
+    description = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.action} at {self.created_at}'
+
+
+def log_activity(actor, action, description=''):
+    return ActivityLog.objects.create(
+        actor=actor if actor and getattr(actor, 'is_authenticated', False) else None,
+        action=action,
+        description=description or '',
+    )

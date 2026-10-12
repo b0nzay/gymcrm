@@ -15,12 +15,6 @@ class IsClient(BasePermission):
             request.user.role == User.Role.CLIENT
         )
 
-class IsMembershipOwner(BasePermission):
-    def has_object_permission(self, request, view, obj):
-        if request.user.role in [User.Role.TRAINER, User.Role.ADMIN]:
-            return True
-        return obj.client == request.user
-
 class IsAdmin(BasePermission):
     def has_permission(self, request, view):
         return (

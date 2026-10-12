@@ -55,6 +55,7 @@ class LoginView(APIView):
 
 class MeView(generics.RetrieveUpdateAPIView):
     serializer_class = UserSerializer
+    http_method_names = ['get', 'patch', 'head', 'options']
 
     def get_object(self):
         return self.request.user
@@ -77,6 +78,8 @@ class AccessCodeRotateView(APIView):
         serializer = AccessCodeRotateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         access_code = serializer.save()
+        from users.models import log_activity
+        log_activity(request.user, 'access_code_rotate', f'Новый код доступа: {access_code.code}')
         return Response(AccessCodeSerializer(access_code).data, status=200)
 
 
@@ -88,7 +91,12 @@ class ClientListView(APIView):
         clients = User.objects.filter(role=User.Role.CLIENT)
 
         if q != '':
-            clients = clients.filter(Q(phone__icontains=q) | Q(first_name__icontains=q) | Q(last_name__icontains=q))
+            lookup = (
+                Q(username__icontains=q)
+                | Q(first_name__icontains=q)
+                | Q(last_name__icontains=q)
+            )
+            clients = clients.filter(lookup)
 
         return Response(UserSerializer(clients, many=True).data)
 
@@ -98,10 +106,18 @@ class ClientDetailView(APIView):
 
     def get(self, request, pk):
         user = get_object_or_404(User, pk=pk, role=User.Role.CLIENT)
+        Membership.sync_overdue(client=user)
         memberships = Membership.objects.filter(client=user).order_by('-issued_at')
         visits = Visit.objects.filter(membership__client=user).order_by('-marked_at')
         notes = StaffNote.objects.filter(client=user).order_by('-created_at')
         return Response({"user": UserSerializer(user).data,"memberships": MembershipSerializer(memberships, many=True).data,"visits": VisitSerializer(visits, many=True).data, "notes": StaffNoteSerializer(notes, many=True).data})
+
+    def patch(self, request, pk):
+        user = get_object_or_404(User, pk=pk, role=User.Role.CLIENT)
+        serializer = UserSerializer(user, data=request.data, partial=True, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(UserSerializer(user).data)
 
 
 class ClientCreateView(generics.CreateAPIView):
@@ -118,11 +134,6 @@ class ClientCreateView(generics.CreateAPIView):
 
 class StaffNoteListCreateView(APIView):
     permission_classes = [IsTrainerOrAdmin]
-
-    def get(self, request, pk):
-        client = get_object_or_404(User, pk=pk, role=User.Role.CLIENT)
-        notes = StaffNote.objects.filter(client=client).order_by('-created_at')
-        return Response(StaffNoteSerializer(notes, many=True).data)
 
     def post(self, request, pk):
         client = get_object_or_404(User, pk=pk, role=User.Role.CLIENT)

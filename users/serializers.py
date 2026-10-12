@@ -1,9 +1,22 @@
 from django.contrib.auth import authenticate
 from rest_framework import serializers
 
-from .models import User, AccessCode, StaffNote
+from .models import User, AccessCode, StaffNote, ActivityLog
+from .nicknames import normalize_username
 
-from datetime import date
+
+def _unique_username(value, instance=None):
+    try:
+        value = normalize_username(value)
+    except ValueError as e:
+        raise serializers.ValidationError(str(e))
+    qs = User.objects.filter(username=value)
+    if instance:
+        qs = qs.exclude(pk=instance.pk)
+    if qs.exists():
+        raise serializers.ValidationError('Пользователь с таким логином уже существует')
+    return value
+
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
@@ -11,12 +24,10 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['phone', 'password', 'access_code']
+        fields = ['username', 'password', 'access_code']
 
-    def validate_phone(self, value):
-        if User.objects.filter(phone=value).exists():
-            raise serializers.ValidationError("Пользователь с таким номером телефона уже существует")
-        return value
+    def validate_username(self, value):
+        return _unique_username(value)
 
     def validate_access_code(self, value):
         active = AccessCode.get_active()
@@ -28,45 +39,53 @@ class RegisterSerializer(serializers.ModelSerializer):
         validated_data.pop('access_code')
         return User.objects.create_user(**validated_data)
 
+
 class LoginSerializer(serializers.Serializer):
-    phone = serializers.CharField()
+    username = serializers.CharField()
     password = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
+        try:
+            username = normalize_username(attrs['username'])
+        except ValueError:
+            raise serializers.ValidationError('Неверный логин или пароль')
         user = authenticate(
-            phone=attrs['phone'], 
+            username=username,
             password=attrs['password']
         )
         if not user:
-            raise serializers.ValidationError("Неверный номер телефона или пароль")
+            raise serializers.ValidationError('Неверный логин или пароль')
         attrs['user'] = user
         return attrs
 
-class UserSerializer(serializers.ModelSerializer):
 
-    age = serializers.SerializerMethodField()
+class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = User
-        fields = ['id', 'phone', 'role', 'first_name', 'last_name', 'full_name',
-            'birth_date', 'age', 'photo', 'medical_notes']
-        read_only_fields = ['role', 'id', 'age', 'full_name']
-
-    def get_age(self, obj):
-        if not obj.birth_date:
-            return None
-        today = date.today()
-        return today.year - obj.birth_date.year - ((today.month, today.day) < (obj.birth_date.month, obj.birth_date.day))
+        fields = ['id', 'username', 'role', 'first_name', 'last_name', 'full_name', 'password']
+        read_only_fields = ['role', 'id', 'full_name', 'username']
 
     def get_full_name(self, obj):
-        return f"{obj.first_name} {obj.last_name}".strip()
+        return f'{obj.first_name} {obj.last_name}'.strip()
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None) or None
+        instance = super().update(instance, validated_data)
+        if password:
+            instance.set_password(password)
+            instance.save()
+        return instance
+
 
 class AccessCodeSerializer(serializers.ModelSerializer):
     class Meta:
         model = AccessCode
         fields = ['code', 'is_active', 'created_at']
         read_only_fields = fields
+
 
 class AccessCodeRotateSerializer(serializers.Serializer):
     code = serializers.CharField(max_length=8, required=False, allow_blank=False)
@@ -85,17 +104,13 @@ class ClientCreateSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     last_name = serializers.CharField(required=True)
     first_name = serializers.CharField(required=True)
-    birth_date = serializers.DateField(required=False, allow_null=True)
-    medical_notes = serializers.CharField(required=False, allow_blank=True, default='')
 
     class Meta:
         model = User
-        fields = ['phone', 'password', 'birth_date', 'medical_notes', 'first_name', 'last_name']
+        fields = ['username', 'password', 'first_name', 'last_name']
 
-    def validate_phone(self, value):
-        if User.objects.filter(phone=value).exists():
-            raise serializers.ValidationError("Пользователь с таким номером телефона уже существует")
-        return value
+    def validate_username(self, value):
+        return _unique_username(value)
 
     def create(self, validated_data):
         return User.objects.create_user(**validated_data, role=User.Role.CLIENT)
@@ -106,13 +121,13 @@ class StaffNoteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StaffNote
-        fields = ['id', 'client', 'text', 'created_at']
+        fields = ['id', 'client', 'text', 'created_at', 'author_name']
         read_only_fields = fields
 
     def get_author_name(self, obj):
         if not obj.author:
             return None
-        return f"{obj.author.first_name} {obj.author.last_name}".strip() or obj.author.phone
+        return obj.author.display_name
 
 
 class StaffNoteCreateSerializer(serializers.Serializer):
@@ -120,3 +135,54 @@ class StaffNoteCreateSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         return StaffNote.objects.create(text=validated_data['text'], client=self.context['client'], author=self.context['request'].user)
+
+
+class AdminUserSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'username', 'role', 'first_name', 'last_name', 'full_name',
+            'is_active',
+        ]
+        read_only_fields = ['id', 'username', 'first_name', 'last_name', 'full_name']
+
+    def get_full_name(self, obj):
+        return obj.display_name
+
+    def validate_role(self, value):
+        if value not in (User.Role.CLIENT, User.Role.TRAINER):
+            raise serializers.ValidationError('Допустимы только роли client или trainer')
+        return value
+
+    def validate(self, attrs):
+        if self.instance and self.instance.role == User.Role.ADMIN:
+            raise serializers.ValidationError('Нельзя изменять администратора')
+        return attrs
+
+
+class TrainerSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'full_name', 'first_name', 'last_name']
+        read_only_fields = fields
+
+    def get_full_name(self, obj):
+        return obj.display_name
+
+
+class ActivityLogSerializer(serializers.ModelSerializer):
+    actor_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ActivityLog
+        fields = ['id', 'action', 'description', 'created_at', 'actor', 'actor_name']
+        read_only_fields = fields
+
+    def get_actor_name(self, obj):
+        if not obj.actor:
+            return None
+        return obj.actor.display_name

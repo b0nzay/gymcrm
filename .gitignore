@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+.venv/
+env/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Django / uploads
+*.log
+db.sqlite3
+media/
+staticfiles/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+*.swp
+
+# Frontend
+gymcrm-web/node_modules/
+gymcrm-web/dist/
+gymcrm-web/dist-ssr/
+*.local
+
+# Local dumps
+чаты/
