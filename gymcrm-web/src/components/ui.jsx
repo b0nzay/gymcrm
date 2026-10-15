@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { mediaUrl } from '../api'
-import logo from '../images/logo.jpg'
 
 export function Page({ children }) {
   return (
     <div className="page">
       <div className="brand">
-        <img className="brand-logo" src={logo} alt="" />
-        <p>Культура тела 74</p>
+        <img className="brand-logo" src="/icon.svg" alt="" />
+        <p>GymCRM</p>
       </div>
       {children}
     </div>
